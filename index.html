@@ -21,6 +21,7 @@ button,input,select,textarea {
   background:#111;
   color:#0f0;
   border:1px solid #333;
+  margin:2px 0;
 }
 .osc {
   border:1px solid #222;
@@ -53,6 +54,7 @@ label {
 <canvas id="scope" width="700" height="200"></canvas>
 
 <button id="start">Start</button>
+<button id="stop">Stop</button>
 <button id="addOsc">Add Oscillator</button>
 
 <label>
@@ -69,10 +71,10 @@ Current Patch JSON (read-only)
 <div id="oscList"></div>
 
 <script>
-let ctx, analyser, masterGain;
+let ctx = null;
+let analyser, masterGain;
 let oscillators = [];
 let running = false;
-
 const scope = document.getElementById("scope");
 const sctx = scope.getContext("2d");
 const oscList = document.getElementById("oscList");
@@ -80,76 +82,82 @@ const oscList = document.getElementById("oscList");
 function link(range, number, callback){
   range.oninput = () => {
     number.value = range.value;
-    callback(range.value);
+    callback(Number(range.value));
     updateJSON();
   };
   number.oninput = () => {
     range.value = number.value;
-    callback(number.value);
+    callback(Number(number.value));
     updateJSON();
   };
 }
 
 function initAudio(){
-  ctx = new AudioContext();
-  analyser = ctx.createAnalyser();
-  masterGain = ctx.createGain();
-  masterGain.gain.value = 0.4;
-  analyser.fftSize = 2048;
-  masterGain.connect(analyser);
-  analyser.connect(ctx.destination);
+  if (!ctx) {
+    ctx = new AudioContext();
+    analyser = ctx.createAnalyser();
+    masterGain = ctx.createGain();
+    masterGain.gain.value = 0.4;
+    analyser.fftSize = 2048;
+    masterGain.connect(analyser);
+    analyser.connect(ctx.destination);
+  }
 }
 
-function addOscillator(data){
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  const delay = ctx.createDelay(5);
+function addOscillator(preset){
+  initAudio();
 
-  const preset = data || {
+  const data = preset || {
     wave:"sine",
     frequency:220,
     gain:0.3,
     delay:0
   };
 
-  osc.type = preset.wave;
-  osc.frequency.value = preset.frequency;
-  gain.gain.value = preset.gain;
-  delay.delayTime.value = preset.delay;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const delay = ctx.createDelay(10);
+
+  osc.type = data.wave;
+  osc.frequency.value = data.frequency;
+  gain.gain.value = data.gain;
+  delay.delayTime.value = data.delay;
 
   osc.connect(gain);
   gain.connect(delay);
   delay.connect(masterGain);
-  osc.start();
 
-  const index = oscillators.length;
-  oscillators.push({osc,gain,delay,preset});
+  // if already running, start the oscillator immediately
+  if (running) osc.start();
+
+  const obj = {osc, gain, delay, preset:data, started:running};
+  oscillators.push(obj);
 
   const div = document.createElement("div");
   div.className = "osc";
   div.innerHTML = `
     <div class="row">
       freq
-      <input type="range" min="20" max="2000" value="${preset.frequency}">
-      <input type="number" min="20" max="2000" value="${preset.frequency}">
+      <input type="range" min="20" max="2000" value="${data.frequency}">
+      <input type="number" min="20" max="2000" value="${data.frequency}">
     </div>
     <div class="row">
       gain
-      <input type="range" min="0" max="1" step="0.01" value="${preset.gain}">
-      <input type="number" min="0" max="1" step="0.01" value="${preset.gain}">
+      <input type="range" min="0" max="1" step="0.01" value="${data.gain}">
+      <input type="number" min="0" max="1" step="0.01" value="${data.gain}">
     </div>
     <div class="row">
       delay
-      <input type="range" min="0" max="1" step="0.01" value="${preset.delay}">
-      <input type="number" min="0" max="1" step="0.01" value="${preset.delay}">
+      <input type="range" min="0" max="10" step="0.01" value="${data.delay}">
+      <input type="number" min="0" max="10" step="0.01" value="${data.delay}">
     </div>
     <div class="row">
       wave
       <select>
-        <option ${preset.wave==="sine"?"selected":""}>sine</option>
-        <option ${preset.wave==="square"?"selected":""}>square</option>
-        <option ${preset.wave==="sawtooth"?"selected":""}>sawtooth</option>
-        <option ${preset.wave==="triangle"?"selected":""}>triangle</option>
+        <option ${data.wave==="sine"?"selected":""}>sine</option>
+        <option ${data.wave==="square"?"selected":""}>square</option>
+        <option ${data.wave==="sawtooth"?"selected":""}>sawtooth</option>
+        <option ${data.wave==="triangle"?"selected":""}>triangle</option>
       </select>
     </div>
   `;
@@ -157,14 +165,11 @@ function addOscillator(data){
   const inputs = div.querySelectorAll("input");
   const wave = div.querySelector("select");
 
-  link(inputs[0], inputs[1], v => osc.frequency.value = v);
-  link(inputs[2], inputs[3], v => gain.gain.value = v);
-  link(inputs[4], inputs[5], v => delay.delayTime.value = v);
+  link(inputs[0], inputs[1], v => { osc.frequency.value = v; });
+  link(inputs[2], inputs[3], v => { gain.gain.value = v; });
+  link(inputs[4], inputs[5], v => { delay.delayTime.value = v; });
 
-  wave.onchange = () => {
-    osc.type = wave.value;
-    updateJSON();
-  };
+  wave.onchange = () => { osc.type = wave.value; updateJSON(); };
 
   oscList.appendChild(div);
   updateJSON();
@@ -173,6 +178,7 @@ function addOscillator(data){
 function drawScope(){
   const buf = new Uint8Array(analyser.fftSize);
   function loop(){
+    if (!running) return;
     analyser.getByteTimeDomainData(buf);
     sctx.fillStyle="black";
     sctx.fillRect(0,0,scope.width,scope.height);
@@ -181,7 +187,7 @@ function drawScope(){
     buf.forEach((v,i)=>{
       const x=i/buf.length*scope.width;
       const y=v/255*scope.height;
-      if(i===0)sctx.moveTo(x,y);
+      if(i===0) sctx.moveTo(x,y);
       else sctx.lineTo(x,y);
     });
     sctx.stroke();
@@ -204,28 +210,33 @@ function updateJSON(){
 document.getElementById("applyJson").onclick = ()=>{
   try{
     const data = JSON.parse(document.getElementById("jsonInput").value);
-    oscList.innerHTML="";
-    oscillators=[];
     data.forEach(o=>addOscillator(o));
   }catch{
     alert("Invalid JSON");
   }
 };
 
-start.onclick=()=>{
-  if(!running){
-    initAudio();
-    addOscillator();
+document.getElementById("start").onclick = ()=>{
+  initAudio();
+  if (!running){
+    // start any oscillators that haven't started
+    oscillators.forEach(o=>{
+      if (!o.started){
+        o.osc.start();
+        o.started = true;
+      }
+    });
+    running = true;
     drawScope();
-    running=true;
-    start.textContent="Stop";
-  }else{
-    ctx.close();
-    location.reload();
   }
 };
 
-addOsc.onclick=()=>ctx&&addOscillator();
+document.getElementById("stop").onclick = ()=>{
+  // stop audio context temporarily
+  running = false;
+};
+
+document.getElementById("addOsc").onclick = ()=> addOscillator();
 </script>
 
 </body>
