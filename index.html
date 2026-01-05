@@ -1,172 +1,214 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Oscilloscope Synth</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oscilloscope Music Lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body {
-    background: #0a0a0a;
-    color: #eaeaea;
-    font-family: monospace;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 20px;
-  }
-
-  canvas {
-    background: black;
-    border: 1px solid #333;
-    margin-bottom: 15px;
-  }
-
-  .controls {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    width: 320px;
-  }
-
-  label {
-    display: flex;
-    flex-direction: column;
-    font-size: 12px;
-  }
-
-  input, select {
-    background: #111;
-    color: #0f0;
-    border: 1px solid #333;
-  }
-
-  button {
-    margin-top: 15px;
-    background: #111;
-    color: #0f0;
-    border: 1px solid #333;
-    padding: 8px;
-    cursor: pointer;
-  }
+body {
+  background:#050505;
+  color:#0f0;
+  font-family:monospace;
+  padding:20px;
+}
+canvas {
+  background:black;
+  border:1px solid #222;
+  display:block;
+  margin-bottom:10px;
+}
+button,input,select {
+  background:#111;
+  color:#0f0;
+  border:1px solid #333;
+}
+.osc {
+  border:1px solid #222;
+  padding:8px;
+  margin-bottom:8px;
+}
+.row {
+  display:flex;
+  gap:6px;
+  align-items:center;
+}
+.row input[type=range] {
+  flex:1;
+}
+.row input[type=number] {
+  width:80px;
+}
 </style>
 </head>
 <body>
 
-<canvas id="scope" width="600" height="200"></canvas>
+<canvas id="scope" width="700" height="200"></canvas>
+<canvas id="imageCanvas" width="700" height="200"></canvas>
 
-<div class="controls">
-  <label>
-    Frequency (Hz)
-    <input type="range" id="freq" min="20" max="2000" value="440">
-  </label>
+<button id="start">Start</button>
+<button id="addOsc">Add Oscillator</button>
+<input type="file" id="imageUpload" accept="image/*">
 
-  <label>
-    Volume
-    <input type="range" id="gain" min="0" max="1" step="0.01" value="0.2">
-  </label>
-
-  <label>
-    Waveform
-    <select id="wave">
-      <option value="sine">sine</option>
-      <option value="square">square</option>
-      <option value="sawtooth">sawtooth</option>
-      <option value="triangle">triangle</option>
-    </select>
-  </label>
-
-  <label>
-    LFO Speed
-    <input type="range" id="lfoSpeed" min="0" max="20" step="0.1" value="0">
-  </label>
-</div>
-
-<button id="toggle">Start</button>
+<div id="oscList"></div>
 
 <script>
-let audioCtx, osc, gainNode, analyser, lfo;
+let ctx, analyser, masterGain;
+let oscillators = [];
 let running = false;
+let scanX = 0;
 
-const canvas = document.getElementById("scope");
-const ctx = canvas.getContext("2d");
+const scope = document.getElementById("scope");
+const sctx = scope.getContext("2d");
+const imgCanvas = document.getElementById("imageCanvas");
+const ictx = imgCanvas.getContext("2d");
 
-function startAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function link(range, number, callback){
+  range.oninput = () => {
+    number.value = range.value;
+    callback(range.value);
+  };
+  number.oninput = () => {
+    range.value = number.value;
+    callback(number.value);
+  };
+}
 
-  osc = audioCtx.createOscillator();
-  gainNode = audioCtx.createGain();
-  analyser = audioCtx.createAnalyser();
-  lfo = audioCtx.createOscillator();
-  const lfoGain = audioCtx.createGain();
-
-  osc.type = wave.value;
-  osc.frequency.value = freq.value;
-  gainNode.gain.value = gain.value;
-
+function initAudio(){
+  ctx = new AudioContext();
+  analyser = ctx.createAnalyser();
+  masterGain = ctx.createGain();
+  masterGain.gain.value = 0.4;
   analyser.fftSize = 2048;
+  masterGain.connect(analyser);
+  analyser.connect(ctx.destination);
+}
 
-  lfo.frequency.value = lfoSpeed.value;
-  lfoGain.gain.value = 50; // modulation depth
+function addOscillator(){
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const delay = ctx.createDelay(5);
 
-  lfo.connect(lfoGain);
-  lfoGain.connect(osc.frequency);
+  osc.type = "sine";
+  osc.frequency.value = 220;
+  gain.gain.value = 0.3;
+  delay.delayTime.value = 0;
 
-  osc.connect(gainNode);
-  gainNode.connect(analyser);
-  analyser.connect(audioCtx.destination);
-
+  osc.connect(gain);
+  gain.connect(delay);
+  delay.connect(masterGain);
   osc.start();
-  lfo.start();
 
-  drawScope();
+  oscillators.push({osc, gain, delay});
+
+  const div = document.createElement("div");
+  div.className = "osc";
+  div.innerHTML = `
+    <div class="row">
+      freq
+      <input type="range" min="20" max="2000" value="220">
+      <input type="number" min="20" max="2000" value="220">
+    </div>
+    <div class="row">
+      gain
+      <input type="range" min="0" max="1" step="0.01" value="0.3">
+      <input type="number" min="0" max="1" step="0.01" value="0.3">
+    </div>
+    <div class="row">
+      delay
+      <input type="range" min="0" max="1" step="0.01" value="0">
+      <input type="number" min="0" max="1" step="0.01" value="0">
+    </div>
+    <div class="row">
+      wave
+      <select>
+        <option>sine</option>
+        <option>square</option>
+        <option>sawtooth</option>
+        <option>triangle</option>
+      </select>
+    </div>
+  `;
+
+  const inputs = div.querySelectorAll("input");
+  const wave = div.querySelector("select");
+
+  link(inputs[0], inputs[1], v => osc.frequency.value = v);
+  link(inputs[2], inputs[3], v => gain.gain.value = v);
+  link(inputs[4], inputs[5], v => delay.delayTime.value = v);
+
+  wave.onchange = () => osc.type = wave.value;
+
+  document.getElementById("oscList").appendChild(div);
 }
 
-function stopAudio() {
-  audioCtx.close();
-}
-
-function drawScope() {
-  const buffer = new Uint8Array(analyser.fftSize);
-
-  function draw() {
-    analyser.getByteTimeDomainData(buffer);
-
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.strokeStyle = "#00ff88";
-    ctx.beginPath();
-
-    buffer.forEach((v, i) => {
-      const x = (i / buffer.length) * canvas.width;
-      const y = (v / 255) * canvas.height;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+function drawScope(){
+  const buf = new Uint8Array(analyser.fftSize);
+  function loop(){
+    analyser.getByteTimeDomainData(buf);
+    sctx.fillStyle="black";
+    sctx.fillRect(0,0,scope.width,scope.height);
+    sctx.strokeStyle="#0f0";
+    sctx.beginPath();
+    buf.forEach((v,i)=>{
+      const x=i/buf.length*scope.width;
+      const y=v/255*scope.height;
+      if(i===0)sctx.moveTo(x,y);
+      else sctx.lineTo(x,y);
     });
-
-    ctx.stroke();
-    requestAnimationFrame(draw);
+    sctx.stroke();
+    requestAnimationFrame(loop);
   }
-
-  draw();
+  loop();
 }
 
-toggle.onclick = () => {
-  if (!running) {
-    startAudio();
-    toggle.textContent = "Stop";
-    running = true;
-  } else {
-    stopAudio();
-    toggle.textContent = "Start";
-    running = false;
+let imgData=null;
+imageUpload.onchange = e=>{
+  const img=new Image();
+  img.onload=()=>{
+    ictx.drawImage(img,0,0,imgCanvas.width,imgCanvas.height);
+    imgData=ictx.getImageData(0,0,imgCanvas.width,imgCanvas.height);
+  };
+  img.src=URL.createObjectURL(e.target.files[0]);
+};
+
+function imageToSound(){
+  if(!imgData||oscillators.length===0) return;
+  scanX=(scanX+1)%imgCanvas.width;
+
+  let energy=0;
+  for(let y=0;y<imgCanvas.height;y+=4){
+    const i=(y*imgCanvas.width+scanX)*4;
+    energy+=(imgData.data[i]+imgData.data[i+1]+imgData.data[i+2])/3;
+  }
+  const norm=energy/(imgCanvas.height*255);
+  const baseFreq=100+norm*1200;
+
+  oscillators.forEach((o,i)=>{
+    o.osc.frequency.setTargetAtTime(baseFreq*(i+1),ctx.currentTime,0.01);
+  });
+
+  ictx.strokeStyle="#0f0";
+  ictx.beginPath();
+  ictx.moveTo(scanX,0);
+  ictx.lineTo(scanX,imgCanvas.height);
+  ictx.stroke();
+}
+
+start.onclick=()=>{
+  if(!running){
+    initAudio();
+    addOscillator();
+    drawScope();
+    setInterval(imageToSound,16);
+    running=true;
+    start.textContent="Stop";
+  }else{
+    ctx.close();
+    location.reload();
   }
 };
 
-freq.oninput = () => osc && (osc.frequency.value = freq.value);
-gain.oninput = () => gainNode && (gainNode.gain.value = gain.value);
-wave.onchange = () => osc && (osc.type = wave.value);
-lfoSpeed.oninput = () => lfo && (lfo.frequency.value = lfoSpeed.value);
+addOsc.onclick=()=>ctx&&addOscillator();
 </script>
 
 </body>
