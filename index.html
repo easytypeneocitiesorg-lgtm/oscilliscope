@@ -17,7 +17,7 @@ canvas {
   display:block;
   margin-bottom:10px;
 }
-button,input,select {
+button,input,select,textarea {
   background:#111;
   color:#0f0;
   border:1px solid #333;
@@ -38,16 +38,33 @@ button,input,select {
 .row input[type=number] {
   width:80px;
 }
+textarea {
+  width:100%;
+  height:120px;
+}
+label {
+  display:block;
+  margin-top:10px;
+}
 </style>
 </head>
 <body>
 
 <canvas id="scope" width="700" height="200"></canvas>
-<canvas id="imageCanvas" width="700" height="200"></canvas>
 
 <button id="start">Start</button>
 <button id="addOsc">Add Oscillator</button>
-<input type="file" id="imageUpload" accept="image/*">
+
+<label>
+Preset JSON (paste here)
+<textarea id="jsonInput"></textarea>
+<button id="applyJson">Apply JSON</button>
+</label>
+
+<label>
+Current Patch JSON (read-only)
+<textarea id="jsonOutput" readonly></textarea>
+</label>
 
 <div id="oscList"></div>
 
@@ -55,21 +72,21 @@ button,input,select {
 let ctx, analyser, masterGain;
 let oscillators = [];
 let running = false;
-let scanX = 0;
 
 const scope = document.getElementById("scope");
 const sctx = scope.getContext("2d");
-const imgCanvas = document.getElementById("imageCanvas");
-const ictx = imgCanvas.getContext("2d");
+const oscList = document.getElementById("oscList");
 
 function link(range, number, callback){
   range.oninput = () => {
     number.value = range.value;
     callback(range.value);
+    updateJSON();
   };
   number.oninput = () => {
     range.value = number.value;
     callback(number.value);
+    updateJSON();
   };
 }
 
@@ -83,48 +100,56 @@ function initAudio(){
   analyser.connect(ctx.destination);
 }
 
-function addOscillator(){
+function addOscillator(data){
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   const delay = ctx.createDelay(5);
 
-  osc.type = "sine";
-  osc.frequency.value = 220;
-  gain.gain.value = 0.3;
-  delay.delayTime.value = 0;
+  const preset = data || {
+    wave:"sine",
+    frequency:220,
+    gain:0.3,
+    delay:0
+  };
+
+  osc.type = preset.wave;
+  osc.frequency.value = preset.frequency;
+  gain.gain.value = preset.gain;
+  delay.delayTime.value = preset.delay;
 
   osc.connect(gain);
   gain.connect(delay);
   delay.connect(masterGain);
   osc.start();
 
-  oscillators.push({osc, gain, delay});
+  const index = oscillators.length;
+  oscillators.push({osc,gain,delay,preset});
 
   const div = document.createElement("div");
   div.className = "osc";
   div.innerHTML = `
     <div class="row">
       freq
-      <input type="range" min="20" max="2000" value="220">
-      <input type="number" min="20" max="2000" value="220">
+      <input type="range" min="20" max="2000" value="${preset.frequency}">
+      <input type="number" min="20" max="2000" value="${preset.frequency}">
     </div>
     <div class="row">
       gain
-      <input type="range" min="0" max="1" step="0.01" value="0.3">
-      <input type="number" min="0" max="1" step="0.01" value="0.3">
+      <input type="range" min="0" max="1" step="0.01" value="${preset.gain}">
+      <input type="number" min="0" max="1" step="0.01" value="${preset.gain}">
     </div>
     <div class="row">
       delay
-      <input type="range" min="0" max="1" step="0.01" value="0">
-      <input type="number" min="0" max="1" step="0.01" value="0">
+      <input type="range" min="0" max="1" step="0.01" value="${preset.delay}">
+      <input type="number" min="0" max="1" step="0.01" value="${preset.delay}">
     </div>
     <div class="row">
       wave
       <select>
-        <option>sine</option>
-        <option>square</option>
-        <option>sawtooth</option>
-        <option>triangle</option>
+        <option ${preset.wave==="sine"?"selected":""}>sine</option>
+        <option ${preset.wave==="square"?"selected":""}>square</option>
+        <option ${preset.wave==="sawtooth"?"selected":""}>sawtooth</option>
+        <option ${preset.wave==="triangle"?"selected":""}>triangle</option>
       </select>
     </div>
   `;
@@ -136,9 +161,13 @@ function addOscillator(){
   link(inputs[2], inputs[3], v => gain.gain.value = v);
   link(inputs[4], inputs[5], v => delay.delayTime.value = v);
 
-  wave.onchange = () => osc.type = wave.value;
+  wave.onchange = () => {
+    osc.type = wave.value;
+    updateJSON();
+  };
 
-  document.getElementById("oscList").appendChild(div);
+  oscList.appendChild(div);
+  updateJSON();
 }
 
 function drawScope(){
@@ -161,45 +190,33 @@ function drawScope(){
   loop();
 }
 
-let imgData=null;
-imageUpload.onchange = e=>{
-  const img=new Image();
-  img.onload=()=>{
-    ictx.drawImage(img,0,0,imgCanvas.width,imgCanvas.height);
-    imgData=ictx.getImageData(0,0,imgCanvas.width,imgCanvas.height);
-  };
-  img.src=URL.createObjectURL(e.target.files[0]);
-};
-
-function imageToSound(){
-  if(!imgData||oscillators.length===0) return;
-  scanX=(scanX+1)%imgCanvas.width;
-
-  let energy=0;
-  for(let y=0;y<imgCanvas.height;y+=4){
-    const i=(y*imgCanvas.width+scanX)*4;
-    energy+=(imgData.data[i]+imgData.data[i+1]+imgData.data[i+2])/3;
-  }
-  const norm=energy/(imgCanvas.height*255);
-  const baseFreq=100+norm*1200;
-
-  oscillators.forEach((o,i)=>{
-    o.osc.frequency.setTargetAtTime(baseFreq*(i+1),ctx.currentTime,0.01);
-  });
-
-  ictx.strokeStyle="#0f0";
-  ictx.beginPath();
-  ictx.moveTo(scanX,0);
-  ictx.lineTo(scanX,imgCanvas.height);
-  ictx.stroke();
+function updateJSON(){
+  const patch = oscillators.map(o=>({
+    wave:o.osc.type,
+    frequency:+o.osc.frequency.value.toFixed(2),
+    gain:+o.gain.gain.value.toFixed(2),
+    delay:+o.delay.delayTime.value.toFixed(2)
+  }));
+  document.getElementById("jsonOutput").value =
+    JSON.stringify(patch,null,2);
 }
+
+document.getElementById("applyJson").onclick = ()=>{
+  try{
+    const data = JSON.parse(document.getElementById("jsonInput").value);
+    oscList.innerHTML="";
+    oscillators=[];
+    data.forEach(o=>addOscillator(o));
+  }catch{
+    alert("Invalid JSON");
+  }
+};
 
 start.onclick=()=>{
   if(!running){
     initAudio();
     addOscillator();
     drawScope();
-    setInterval(imageToSound,16);
     running=true;
     start.textContent="Stop";
   }else{
