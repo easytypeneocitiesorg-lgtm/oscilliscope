@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Oscilloscope Synth</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body {
+    background: #0a0a0a;
+    color: #eaeaea;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+
+  canvas {
+    background: black;
+    border: 1px solid #333;
+    margin-bottom: 15px;
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    width: 320px;
+  }
+
+  label {
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+  }
+
+  input, select {
+    background: #111;
+    color: #0f0;
+    border: 1px solid #333;
+  }
+
+  button {
+    margin-top: 15px;
+    background: #111;
+    color: #0f0;
+    border: 1px solid #333;
+    padding: 8px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="scope" width="600" height="200"></canvas>
+
+<div class="controls">
+  <label>
+    Frequency (Hz)
+    <input type="range" id="freq" min="20" max="2000" value="440">
+  </label>
+
+  <label>
+    Volume
+    <input type="range" id="gain" min="0" max="1" step="0.01" value="0.2">
+  </label>
+
+  <label>
+    Waveform
+    <select id="wave">
+      <option value="sine">sine</option>
+      <option value="square">square</option>
+      <option value="sawtooth">sawtooth</option>
+      <option value="triangle">triangle</option>
+    </select>
+  </label>
+
+  <label>
+    LFO Speed
+    <input type="range" id="lfoSpeed" min="0" max="20" step="0.1" value="0">
+  </label>
+</div>
+
+<button id="toggle">Start</button>
+
+<script>
+let audioCtx, osc, gainNode, analyser, lfo;
+let running = false;
+
+const canvas = document.getElementById("scope");
+const ctx = canvas.getContext("2d");
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  osc = audioCtx.createOscillator();
+  gainNode = audioCtx.createGain();
+  analyser = audioCtx.createAnalyser();
+  lfo = audioCtx.createOscillator();
+  const lfoGain = audioCtx.createGain();
+
+  osc.type = wave.value;
+  osc.frequency.value = freq.value;
+  gainNode.gain.value = gain.value;
+
+  analyser.fftSize = 2048;
+
+  lfo.frequency.value = lfoSpeed.value;
+  lfoGain.gain.value = 50; // modulation depth
+
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+
+  osc.connect(gainNode);
+  gainNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  osc.start();
+  lfo.start();
+
+  drawScope();
+}
+
+function stopAudio() {
+  audioCtx.close();
+}
+
+function drawScope() {
+  const buffer = new Uint8Array(analyser.fftSize);
+
+  function draw() {
+    analyser.getByteTimeDomainData(buffer);
+
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = "#00ff88";
+    ctx.beginPath();
+
+    buffer.forEach((v, i) => {
+      const x = (i / buffer.length) * canvas.width;
+      const y = (v / 255) * canvas.height;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+
+    ctx.stroke();
+    requestAnimationFrame(draw);
+  }
+
+  draw();
+}
+
+toggle.onclick = () => {
+  if (!running) {
+    startAudio();
+    toggle.textContent = "Stop";
+    running = true;
+  } else {
+    stopAudio();
+    toggle.textContent = "Start";
+    running = false;
+  }
+};
+
+freq.oninput = () => osc && (osc.frequency.value = freq.value);
+gain.oninput = () => gainNode && (gainNode.gain.value = gain.value);
+wave.onchange = () => osc && (osc.type = wave.value);
+lfoSpeed.oninput = () => lfo && (lfo.frequency.value = lfoSpeed.value);
+</script>
+
+</body>
+</html>
