@@ -38,14 +38,13 @@ Current Patch JSON (read-only)
 <div id="oscList"></div>
 
 <script>
-let ctx = null;
-let analyser, masterGain;
-let oscillators = [];
-let running = false;
-const MASTER_VOLUME = 0.4;
-const scope = document.getElementById("scope");
-const sctx = scope.getContext("2d");
-const oscList = document.getElementById("oscList");
+let ctx=null, analyser, masterGain;
+let oscillators=[];
+let running=false;
+const MASTER_VOLUME=0.4;
+const scope=document.getElementById("scope");
+const sctx=scope.getContext("2d");
+const oscList=document.getElementById("oscList");
 
 function link(range, number, callback){
   range.oninput = () => { number.value = range.value; callback(Number(range.value)); updateJSON(); };
@@ -53,50 +52,63 @@ function link(range, number, callback){
 }
 
 function initAudio(){
-  if (!ctx){
-    ctx = new AudioContext();
-    analyser = ctx.createAnalyser();
-    masterGain = ctx.createGain();
-    masterGain.gain.value = 0;
-    analyser.fftSize = 2048;
+  if(!ctx){
+    ctx=new AudioContext();
+    analyser=ctx.createAnalyser();
+    masterGain=ctx.createGain();
+    masterGain.gain.value=0;
+    analyser.fftSize=2048;
     masterGain.connect(analyser);
     analyser.connect(ctx.destination);
   }
 }
 
-function clearOscillators(){
-  oscillators.forEach(o=>{
-    try{o.osc.stop();}catch{}
-  });
-  oscillators=[];
-  oscList.innerHTML="";
-}
-
 function addOscillator(preset){
   initAudio();
-  const data = preset || {wave:"sine",frequency:220,gain:0.3,delay:0};
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  const delay = ctx.createDelay(10);
-
-  osc.type = data.wave;
-  osc.frequency.value = data.frequency;
-  gain.gain.value = data.gain;
-  delay.delayTime.value = data.delay;
-
+  const data=preset||{wave:"sine",frequency:220,gain:0.3,duration:1,infinite:true,loop:false};
+  const osc=ctx.createOscillator();
+  const gain=ctx.createGain();
+  osc.type=data.wave;
+  osc.frequency.value=data.frequency;
+  gain.gain.value=data.gain;
   osc.connect(gain);
-  gain.connect(delay);
-  delay.connect(masterGain);
+  gain.connect(masterGain);
 
-  const obj = {osc,gain,delay,preset:data,started:false};
+  const obj={osc,gain,preset:data,started:false,timeout:null};
   oscillators.push(obj);
 
-  const div = document.createElement("div");
+  // Schedule start with duration/loop logic
+  function startOsc(){
+    if(!obj.started){
+      obj.osc.start();
+      obj.started=true;
+    }
+    if(!data.infinite){
+      obj.timeout=setTimeout(()=>{
+        try{obj.osc.stop();}catch{}
+        if(data.loop){
+          const newOsc=ctx.createOscillator();
+          newOsc.type=data.wave;
+          newOsc.frequency.value=data.frequency;
+          newOsc.connect(gain);
+          obj.osc=newOsc;
+          obj.started=false;
+          startOsc();
+        }
+      },data.duration*1000);
+    }
+  }
+  if(running) startOsc();
+  obj.startOsc=startOsc;
+
+  // UI
+  const div=document.createElement("div");
   div.className="osc";
   div.innerHTML=`
     <div class="row">freq<input type="range" min="20" max="2000" value="${data.frequency}"><input type="number" min="20" max="2000" value="${data.frequency}"></div>
     <div class="row">gain<input type="range" min="0" max="1" step="0.01" value="${data.gain}"><input type="number" min="0" max="1" step="0.01" value="${data.gain}"></div>
-    <div class="row">delay<input type="range" min="0" max="10" step="0.01" value="${data.delay}"><input type="number" min="0" max="10" step="0.01" value="${data.delay}"></div>
+    <div class="row">duration<input type="range" min="0.1" max="10" step="0.1" value="${data.duration}"><input type="number" min="0.1" max="10" step="0.1" value="${data.duration}"></div>
+    <div class="row">infinite<input type="checkbox" ${data.infinite?"checked":""}> loop<input type="checkbox" ${data.loop?"checked":""}></div>
     <div class="row">wave<select>
       <option ${data.wave==="sine"?"selected":""}>sine</option>
       <option ${data.wave==="square"?"selected":""}>square</option>
@@ -104,18 +116,21 @@ function addOscillator(preset){
       <option ${data.wave==="triangle"?"selected":""}>triangle</option>
     </select></div>
   `;
-  const inputs=div.querySelectorAll("input");
-  const wave=div.querySelector("select");
+  const inputs=div.querySelectorAll("input[type=range],input[type=number]");
   link(inputs[0],inputs[1],v=>{osc.frequency.value=v;});
   link(inputs[2],inputs[3],v=>{gain.gain.value=v;});
-  link(inputs[4],inputs[5],v=>{delay.delayTime.value=v;});
-  wave.onchange=()=>{osc.type=wave.value;updateJSON();};
+  link(inputs[4],inputs[5],v=>{data.duration=Number(inputs[5].value);});
+  const checkboxes=div.querySelectorAll("input[type=checkbox]");
+  checkboxes[0].onchange=()=>{data.infinite=checkboxes[0].checked;};
+  checkboxes[1].onchange=()=>{data.loop=checkboxes[1].checked;};
+  const wave=div.querySelector("select");
+  wave.onchange=()=>{data.wave=wave.value;};
   oscList.appendChild(div);
   updateJSON();
 }
 
 function drawScope(){
-  const buf = new Uint8Array(analyser.fftSize);
+  const buf=new Uint8Array(analyser.fftSize);
   function loop(){
     if(!running) return;
     analyser.getByteTimeDomainData(buf);
@@ -126,8 +141,7 @@ function drawScope(){
     buf.forEach((v,i)=>{
       const x=i/buf.length*scope.width;
       const y=v/255*scope.height;
-      if(i===0) sctx.moveTo(x,y);
-      else sctx.lineTo(x,y);
+      if(i===0) sctx.moveTo(x,y); else sctx.lineTo(x,y);
     });
     sctx.stroke();
     requestAnimationFrame(loop);
@@ -137,10 +151,12 @@ function drawScope(){
 
 function updateJSON(){
   const patch=oscillators.map(o=>({
-    wave:o.osc.type,
-    frequency:+o.osc.frequency.value.toFixed(2),
-    gain:+o.gain.gain.value.toFixed(2),
-    delay:+o.delay.delayTime.value.toFixed(2)
+    wave:o.preset.wave,
+    frequency:+o.preset.frequency.toFixed(2),
+    gain:+o.preset.gain.toFixed(2),
+    duration:+o.preset.duration.toFixed(2),
+    infinite:o.preset.infinite,
+    loop:o.preset.loop
   }));
   document.getElementById("jsonOutput").value=JSON.stringify(patch,null,2);
 }
@@ -149,22 +165,16 @@ document.getElementById("applyJson").onclick=()=>{
   try{
     const data=JSON.parse(document.getElementById("jsonInput").value);
     data.forEach(o=>addOscillator(o));
-  }catch{
-    alert("Invalid JSON");
-  }
+  }catch{alert("Invalid JSON");}
 };
 
+// PAUSE / PLAY using masterGain
 document.getElementById("start").onclick=()=>{
   initAudio();
   running=true;
   masterGain.gain.setTargetAtTime(MASTER_VOLUME,ctx.currentTime,0.01);
-  // stop any previous oscillators and restart fresh
-  const currentPatch = oscillators.map(o=>o.preset);
-  clearOscillators();
-  currentPatch.forEach(p=>addOscillator(p));
   oscillators.forEach(o=>{
-    o.osc.start();
-    o.started=true;
+    if(!o.started) o.startOsc();
   });
   drawScope();
 };
