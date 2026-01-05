@@ -56,7 +56,7 @@ function initAudio(){
     ctx=new AudioContext();
     analyser=ctx.createAnalyser();
     masterGain=ctx.createGain();
-    masterGain.gain.value=0;
+    masterGain.gain.value=0; // start muted
     analyser.fftSize=2048;
     masterGain.connect(analyser);
     analyser.connect(ctx.destination);
@@ -77,7 +77,7 @@ function addOscillator(preset){
   const obj={osc,gain,preset:data,started:false,timeout:null};
   oscillators.push(obj);
 
-  // Schedule start with duration/loop logic
+  // Schedule oscillator with duration/loop
   function startOsc(){
     if(!obj.started){
       obj.osc.start();
@@ -125,7 +125,9 @@ function addOscillator(preset){
   checkboxes[1].onchange=()=>{data.loop=checkboxes[1].checked;};
   const wave=div.querySelector("select");
   wave.onchange=()=>{data.wave=wave.value;};
+
   oscList.appendChild(div);
+  obj.div = div; // store div for live JSON updates
   updateJSON();
 }
 
@@ -150,15 +152,21 @@ function drawScope(){
 }
 
 function updateJSON(){
-  const patch=oscillators.map(o=>({
-    wave:o.preset.wave,
-    frequency:+o.preset.frequency.toFixed(2),
-    gain:+o.preset.gain.toFixed(2),
-    duration:+o.preset.duration.toFixed(2),
-    infinite:o.preset.infinite,
-    loop:o.preset.loop
-  }));
-  document.getElementById("jsonOutput").value=JSON.stringify(patch,null,2);
+  const patch = oscillators.map(o => {
+    const div = o.div;
+    const inputs = div.querySelectorAll("input[type=range],input[type=number]");
+    const checkboxes = div.querySelectorAll("input[type=checkbox]");
+    const wave = div.querySelector("select");
+    return {
+      wave: wave.value,
+      frequency: Number(inputs[1].value),
+      gain: Number(inputs[3].value),
+      duration: Number(inputs[5].value),
+      infinite: checkboxes[0].checked,
+      loop: checkboxes[1].checked
+    };
+  });
+  document.getElementById("jsonOutput").value = JSON.stringify(patch,null,2);
 }
 
 document.getElementById("applyJson").onclick=()=>{
@@ -168,14 +176,12 @@ document.getElementById("applyJson").onclick=()=>{
   }catch{alert("Invalid JSON");}
 };
 
-// PAUSE / PLAY using masterGain
+// PAUSE/PLAY with master gain
 document.getElementById("start").onclick=()=>{
   initAudio();
   running=true;
   masterGain.gain.setTargetAtTime(MASTER_VOLUME,ctx.currentTime,0.01);
-  oscillators.forEach(o=>{
-    if(!o.started) o.startOsc();
-  });
+  oscillators.forEach(o=>{ if(!o.started) o.startOsc(); });
   drawScope();
 };
 
